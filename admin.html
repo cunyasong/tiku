@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>老板总控台 (最终版)</title>
+    <script src="https://unpkg.com/leancloud-storage@4.15.0/dist/av-min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root { --p: #2563eb; --bg: #f1f5f9; }
+        body { margin: 0; font-family: sans-serif; background: var(--bg); display: flex; height: 100vh; overflow: hidden; }
+        .side { width: 250px; background: white; border-right: 1px solid #e2e8f0; display: flex; flex-direction: column; }
+        .menu-item { padding: 15px 20px; cursor: pointer; color: #64748b; font-weight: 500; border-left: 4px solid transparent; }
+        .menu-item:hover { background: #f8fafc; }
+        .menu-item.active { background: #eff6ff; color: var(--p); border-left-color: var(--p); }
+        .main { flex: 1; padding: 30px; overflow-y: auto; }
+        .panel { display: none; }
+        .panel.active { display: block; }
+        .box { background: white; padding: 20px; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 20px; }
+        input, select, textarea { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; margin-bottom: 10px; box-sizing: border-box; }
+        .btn { padding: 10px 15px; border: none; border-radius: 6px; cursor: pointer; color: white; background: var(--p); }
+        .btn-green { background: #10b981; } .btn-red { background: #ef4444; } .btn-outline { background: white; border: 1px solid #ccc; color: #333; }
+        .tree-node { padding: 10px; border: 1px solid #eee; margin-bottom: 5px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; background: white; }
+        /* 登录层 */
+        #login { position: fixed; inset: 0; background: white; z-index: 999; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+        /* 弹窗 */
+        .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 100; }
+        .modal-box { background: white; width: 500px; padding: 20px; border-radius: 10px; }
+    </style>
+</head>
+<body>
+
+<!-- 登录 -->
+<div id="login">
+    <h2>🔗 连接云端后台</h2>
+    <div style="width:300px">
+        <input id="appId" placeholder="AppID">
+        <input id="appKey" type="password" placeholder="AppKey">
+        <button class="btn" style="width:100%" onclick="conn()">连接</button>
+    </div>
+</div>
+
+<!-- 侧边栏 -->
+<div class="side">
+    <div style="padding:20px; font-size:18px; font-weight:bold; border-bottom:1px solid #eee;">💼 总控台</div>
+    <div class="menu-item active" onclick="tab('content')">📚 题库内容</div>
+    <div class="menu-item" onclick="tab('config')">⚙️ App配置</div>
+    <div class="menu-item" onclick="tab('codes')">🔑 激活码管理</div>
+    <div style="margin-top:auto; padding:20px;">
+        <button class="btn" style="width:100%" onclick="saveAll()">💾 保存所有更改</button>
+    </div>
+</div>
+
+<!-- 主界面 -->
+<div class="main">
+    <!-- 1. 内容管理 -->
+    <div id="p-content" class="panel active">
+        <button class="btn btn-green" onclick="addRoot()">+ 新建大类</button>
+        <div id="tree" style="margin-top:20px"></div>
+    </div>
+
+    <!-- 2. App配置 -->
+    <div id="p-config" class="panel">
+        <div class="box">
+            <h3>📢 首页公告</h3>
+            <input id="cfg-notice" placeholder="输入公告内容，App顶部会滚动显示">
+        </div>
+        <div class="box">
+            <h3>📄 自定义页面 (填补不能改页面的漏洞)</h3>
+            <p style="font-size:12px; color:#666">启用后，App底部会出现第3个按钮。</p>
+            <input id="cfg-tab-title" placeholder="页面名称 (如: 考试须知)">
+            <textarea id="cfg-tab-html" rows="5" placeholder="页面内容 (支持HTML代码)"></textarea>
+        </div>
+        <div class="box">
+            <h3>📞 联系方式</h3>
+            <input id="cfg-contact" placeholder="输入微信号或电话，显示在'我的'页面">
+        </div>
+    </div>
+
+    <!-- 3. 激活码 -->
+    <div id="p-codes" class="panel">
+        <div class="box" style="background:#eff6ff; border-color:#bfdbfe">
+            <h3>💰 生成激活码</h3>
+            <label>课程ID (去题库里复制红色的ID)</label>
+            <input id="gen-target">
+            <label>有效期</label>
+            <select id="gen-days">
+                <option value="-1">永久有效</option>
+                <option value="1">1天 (体验)</option>
+                <option value="7">7天 (周卡)</option>
+                <option value="30">30天 (月卡)</option>
+                <option value="365">365天 (年卡)</option>
+            </select>
+            <label>数量</label>
+            <select id="gen-num"><option value="1">1个</option><option value="10">10个</option><option value="50">50个</option></select>
+            <button class="btn btn-green" onclick="doGen()">🚀 生成并导出Excel</button>
+        </div>
+        <div class="box">
+            <h3>🔧 售后解绑</h3>
+            <input id="reset-code" placeholder="输入客户激活码">
+            <button class="btn btn-outline" onclick="resetDevice()">重置设备绑定</button>
+        </div>
+    </div>
+</div>
+
+<!-- 编辑弹窗 -->
+<div class="modal" id="modal">
+    <div class="modal-box">
+        <h3>编辑</h3>
+        <input id="m-name" placeholder="名称">
+        <select id="m-type" onchange="toggleImp()"><option value="folder">📂 文件夹</option><option value="paper">📄 试卷</option></select>
+        <input id="m-id" placeholder="🔒 收费ID (如: vip1)，不填则免费">
+        
+        <div id="imp-box" style="display:none; border-top:1px solid #eee; padding-top:10px">
+            <button class="btn btn-outline" onclick="dlTpl()">下载Excel模版</button>
+            <input type="file" onchange="impExcel(this)" accept=".xlsx" style="margin-top:10px">
+            <p id="imp-msg" style="color:green; font-size:12px"></p>
+        </div>
+
+        <div style="margin-top:20px; text-align:right">
+            <button class="btn btn-outline" onclick="document.getElementById('modal').style.display='none'">取消</button>
+            <button class="btn" onclick="saveM()">确定</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let appData = { list: [], config: {} }, curArr, isEd, edRef, tmpQs=[];
+    
+    function conn() {
+        const id = document.getElementById('appId').value;
+        const key = document.getElementById('appKey').value;
+        if(!id) return;
+        AV.init({ appId: id, appKey: key });
+        load();
+    }
+
+    async function load() {
+        try {
+            const r = await new AV.Query('AppContent').descending('updatedAt').first();
+            if(r && r.get('json')) appData = Array.isArray(r.get('json')) ? {list:r.get('json'), config:{}} : r.get('json');
+            renderTree(); renderConfig();
+            document.getElementById('login').style.display='none';
+        } catch(e) { alert('连接失败，请检查ID'); }
+    }
+
+    function tab(t) {
+        document.querySelectorAll('.panel').forEach(e=>e.classList.remove('active'));
+        document.querySelectorAll('.menu-item').forEach(e=>e.classList.remove('active'));
+        document.getElementById('p-'+t).classList.add('active');
+        // event.target.classList.add('active');
+    }
+
+    // 树渲染
+    function renderTree() {
+        const box = document.getElementById('tree'); box.innerHTML='';
+        const run = (arr, el) => {
+            if(!arr) return;
+            arr.forEach((it,i) => {
+                const d = document.createElement('div');
+                const isF = it.type === 'folder';
+                d.innerHTML = `
+                    <div class="tree-node">
+                        <div><b style="color:${isF?'#2563eb':'#ef4444'}">${isF?'📂':'📄'}</b> ${it.name} <span style="font-size:10px; color:#c2410c; background:#fff7ed">${it.id||''}</span></div>
+                        <div>
+                            ${it.id ? `<button onclick="toGen('${it.id}')" style="font-size:10px">卖码</button>` : ''}
+                            ${isF ? `<button onclick="add(this,${i})">+</button>` : ''}
+                            <button onclick="edit(this,${i})">✎</button>
+                            <button onclick="del(this,${i})" style="color:red">×</button>
+                        </div>
+                    </div>
+                    <div class="sub" style="margin-left:20px; display:none"></div>
+                `;
+                d.querySelector('.tree-node').onclick = e => { if(e.target.tagName!='BUTTON') d.querySelector('.sub').style.display = d.querySelector('.sub').style.display=='none'?'block':'none' };
+                d.querySelectorAll('button').forEach(b => b.pArr = arr);
+                if(isF && it.children) run(it.children, d.querySelector('.sub'));
+                el.appendChild(d);
+            });
+        };
+        run(appData.list, box);
+    }
+
+    // 增删改
+    function addRoot(){ curArr=appData.list; isEd=false; openM(); }
+    window.add=(b,i)=>{ curArr=b.pArr[i].children=b.pArr[i].children||[]; isEd=false; openM(); }
+    window.edit=(b,i)=>{ edRef=b.pArr[i]; isEd=true; openM(edRef); }
+    window.del=(b,i)=>{ if(confirm('删?')) { b.pArr.splice(i,1); renderTree(); } }
+
+    function openM(d){
+        document.getElementById('m-name').value = d?d.name:'';
+        document.getElementById('m-type').value = d?d.type:'folder';
+        document.getElementById('m-id').value = d?(d.id||''):'';
+        tmpQs = d && d.questions ? d.questions : [];
+        toggleImp();
+        document.getElementById('modal').style.display='flex';
+        document.getElementById('imp-msg').innerText = `当前 ${tmpQs.length} 题`;
+    }
+    function saveM(){
+        const n = document.getElementById('m-name').value;
+        const t = document.getElementById('m-type').value;
+        const id = document.getElementById('m-id').value;
+        const o = { name:n, type:t, id:id||undefined };
+        if(t==='folder') o.children = (isEd && edRef.children) ? edRef.children : []; else o.questions = tmpQs;
+        if(isEd) Object.assign(edRef, o); else curArr.push(o);
+        renderTree(); document.getElementById('modal').style.display='none';
+    }
+
+    // 配置
+    function renderConfig(){
+        const c = appData.config || {};
+        document.getElementById('cfg-notice').value = c.notice||'';
+        document.getElementById('cfg-tab-title').value = c.tabTitle||'';
+        document.getElementById('cfg-tab-html').value = c.tabHtml||'';
+        document.getElementById('cfg-contact').value = c.contact||'';
+    }
+
+    async function saveAll(){
+        appData.config = {
+            notice: document.getElementById('cfg-notice').value,
+            tabTitle: document.getElementById('cfg-tab-title').value,
+            tabHtml: document.getElementById('cfg-tab-html').value,
+            contact: document.getElementById('cfg-contact').value
+        };
+        try {
+            const r = new (AV.Object.extend('AppContent'))();
+            r.set('json', appData);
+            await r.save();
+            alert('🎉 保存成功，App已更新！');
+        } catch(e) { alert('失败:'+e.message); }
+    }
+
+    // 激活码
+    function toGen(id) { document.getElementById('gen-target').value = id; tab('codes'); }
+    async function doGen() {
+        const id = document.getElementById('gen-target').value;
+        const days = parseInt(document.getElementById('gen-days').value);
+        const num = parseInt(document.getElementById('gen-num').value);
+        if(!id) return alert('填ID');
+        const objs=[], codes=[];
+        for(let i=0; i<num; i++){
+            let c = Math.random().toString(36).substr(2,8).toUpperCase();
+            const r = new (AV.Object.extend('Invites'))();
+            r.set('code',c); r.set('subjectId',id); r.set('duration',days); r.set('deviceIds',[]);
+            objs.push(r);
+            codes.push({'Code':c, 'Days':days, 'ID':id});
+        }
+        await AV.Object.saveAll(objs);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(codes), "Sheet1");
+        XLSX.writeFile(wb, "激活码.xlsx");
+        alert('生成成功');
+    }
+
+    // Excel
+    function toggleImp(){ document.getElementById('imp-box').style.display = document.getElementById('m-type').value==='paper'?'block':'none'; }
+    function dlTpl(){ 
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["题目","A","B","C","D","答案(A/B/C/D)","解析"],["1+1=?","1","2","3","4","B","解析"]]), "Sheet1");
+        XLSX.writeFile(wb, "模版.xlsx");
+    }
+    function impExcel(ipt){
+        const r = new FileReader();
+        r.onload = e => {
+            const arr = XLSX.utils.sheet_to_json(XLSX.read(e.target.result,{type:'array'}).Sheets['Sheet1'], {header:1});
+            for(let i=1; i<arr.length; i++) if(arr[i][0]) tmpQs.push({
+                q:arr[i][0], o:[arr[i][1]||'',arr[i][2]||'',arr[i][3]||'',arr[i][4]||''],
+                a:{'A':0,'B':1,'C':2,'D':3}[(arr[i][5]||'A').trim().toUpperCase()]||0, r:arr[i][6]||''
+            });
+            document.getElementById('imp-msg').innerText = `已加 ${tmpQs.length} 题`;
+        };
+        r.readAsArrayBuffer(ipt.files[0]);
+    }
+
+    // 重置
+    async function resetDevice(){
+        const c = document.getElementById('reset-code').value;
+        const q = new AV.Query('Invites'); q.equalTo('code',c);
+        const r = await q.first();
+        if(r) { r.set('deviceIds',[]); await r.save(); alert('已重置'); } else alert('未找到');
+    }
+</script>
+</body>
+</html>

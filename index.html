@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <!-- 核心：手机适配设置 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>刷题神器</title>
+    <!-- 引入 LeanCloud -->
+    <script src="https://cdn.jsdelivr.net/npm/leancloud-storage@4.15.0/dist/av-min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root { --p: #2563eb; --bg: #f8fafc; --card: #fff; --text: #1e293b; --safe: env(safe-area-inset-bottom); }
+        body.dark { --p: #60a5fa; --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; }
+        
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, sans-serif; transition: 0.3s; user-select: none; overflow-x: hidden; }
+        
+        /* 防白屏加载动画 */
+        #loading-mask { position: fixed; inset: 0; background: var(--bg); z-index: 9999; display: flex; align-items: center; justify-content: center; flex-direction: column; transition: opacity 0.5s; }
+        .spinner { width: 40px; height: 40px; border: 4px solid #e2e8f0; border-top: 4px solid var(--p); border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 15px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* 页面布局 */
+        .page { display: none; padding-bottom: 80px; animation: fade 0.3s; min-height: 100vh; }
+        .page.active { display: block; }
+        @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+        /* 顶部导航 */
+        .nav { position: sticky; top: 0; height: 50px; background: var(--card); display: flex; align-items: center; justify-content: space-between; padding: 0 15px; border-bottom: 1px solid rgba(0,0,0,0.05); z-index: 800; box-shadow: 0 1px 2px rgba(0,0,0,0.02); }
+        .nav b { font-size: 17px; max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        
+        /* 底部Tab */
+        .tabs { position: fixed; bottom: 0; width: 100%; height: calc(55px + var(--safe)); background: var(--card); border-top: 1px solid rgba(0,0,0,0.05); display: flex; padding-bottom: var(--safe); z-index: 900; }
+        .tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 10px; color: #94a3b8; transition: 0.2s; }
+        .tab.active { color: var(--p); transform: scale(1.05); }
+        .tab i { font-size: 22px; margin-bottom: 3px; }
+
+        /* 列表样式 */
+        .list { padding: 15px; }
+        .notice-bar { background: #fffbeb; color: #b45309; font-size: 13px; padding: 10px 15px; display: none; margin-bottom: 10px; border-radius: 8px; }
+        .card { background: var(--card); padding: 15px; border-radius: 12px; margin-bottom: 12px; display: flex; align-items: center; box-shadow: 0 2px 6px rgba(0,0,0,0.03); }
+        .card:active { transform: scale(0.98); opacity: 0.9; }
+        .tag { font-size: 10px; padding: 3px 6px; border-radius: 4px; margin-left: auto; font-weight: bold; }
+        .tag-vip { background: #fff7ed; color: #c2410c; }
+        .tag-ok { background: #dcfce7; color: #166534; }
+
+        /* 答题页 */
+        #quiz { position: fixed; inset: 0; background: var(--bg); z-index: 2000; display: none; flex-direction: column; }
+        .opt { background: var(--card); padding: 16px; border-radius: 12px; margin-bottom: 12px; display: flex; gap: 12px; border: 1.5px solid transparent; transition: 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
+        .opt.sel { border-color: var(--p); background: rgba(37,99,235,0.02); } 
+        .opt.ok { background: rgba(34,197,94,0.1); border-color: #22c55e; }
+        .opt.err { background: rgba(239,68,68,0.1); border-color: #ef4444; }
+        
+        /* 弹窗 */
+        .mask { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 3000; backdrop-filter: blur(4px); }
+        .pop { background: var(--card); width: 85%; max-width: 300px; padding: 25px; border-radius: 16px; text-align: center; }
+        .inp { width: 100%; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; margin: 15px 0; text-align: center; font-size: 18px; background: var(--bg); color: var(--text); outline: none; }
+        .btn-full { width: 100%; padding: 12px; background: var(--p); color: white; border: none; border-radius: 8px; font-weight: bold; font-size: 16px; }
+
+        .empty-tip { text-align: center; color: #94a3b8; padding-top: 50px; }
+    </style>
+</head>
+<body>
+
+    <!-- 1. 加载遮罩 (防白屏) -->
+    <div id="loading-mask">
+        <div class="spinner"></div>
+        <div style="font-size:12px; color:#94a3b8" id="loading-text">资源加载中...</div>
+    </div>
+
+    <!-- 底部导航 -->
+    <div class="tabs">
+        <div class="tab active" onclick="goTab('home')"><i class="fas fa-book"></i><span>题库</span></div>
+        <div class="tab" onclick="goTab('mine')"><i class="fas fa-user"></i><span>我的</span></div>
+    </div>
+
+    <!-- 首页 -->
+    <div id="p-home" class="page active">
+        <div class="nav">
+            <i class="fas fa-chevron-left" id="back" style="opacity:0; width:30px" onclick="goBack()"></i>
+            <b id="title">题库中心</b>
+            <i class="fas fa-sync" onclick="sync()" style="width:30px; text-align:right"></i>
+        </div>
+        <div id="notice-bar" class="notice-bar"></div>
+        <div id="list" class="list"></div>
+    </div>
+
+    <!-- 个人中心 -->
+    <div id="p-mine" class="page">
+        <div class="nav"><b>个人中心</b><i class="fas fa-moon" onclick="toggleDark()"></i></div>
+        <div class="list">
+            <div class="card" style="background: linear-gradient(135deg, var(--p), #3b82f6); color:white; border:none;">
+                <div style="flex:1; text-align:center">
+                    <div style="font-size:24px; font-weight:bold" id="s-err">0</div><div style="font-size:12px; opacity:0.9">错题本</div>
+                </div>
+                <div style="width:1px; height:30px; background:rgba(255,255,255,0.3)"></div>
+                <div style="flex:1; text-align:center">
+                    <div style="font-size:24px; font-weight:bold" id="s-star">0</div><div style="font-size:12px; opacity:0.9">收藏夹</div>
+                </div>
+            </div>
+            
+            <h4 style="margin:20px 0 10px 5px; font-size:14px; opacity:0.6">学习记录 (点击复习)</h4>
+            <div id="err-list"></div>
+            <div id="star-list"></div>
+            
+            <div style="text-align:center; font-size:12px; color:#94a3b8; margin-top:40px; padding-bottom:20px" id="contact-info"></div>
+        </div>
+    </div>
+
+    <!-- 答题页 -->
+    <div id="quiz">
+        <div class="nav">
+            <i class="fas fa-times" onclick="quitQ()" style="padding:10px"></i>
+            <b id="q-title">练习</b>
+            <i class="fas fa-font" onclick="resize()" style="padding:10px"></i>
+        </div>
+        <div style="height:3px; background:#f1f5f9"><div id="prog-bar" style="height:100%; background:var(--p); width:0%; transition:width 0.3s"></div></div>
+        <div style="flex:1; overflow-y:auto; padding:20px; -webkit-overflow-scrolling: touch;" id="q-box"></div>
+        <div style="height:60px; border-top:1px solid #f1f5f9; background:var(--card); display:flex; align-items:center; justify-content:space-between; padding:0 20px; padding-bottom:var(--safe)">
+            <i class="fas fa-chevron-left" onclick="mv(-1)" style="font-size:20px; padding:10px"></i>
+            <i class="far fa-star" id="btn-star" onclick="star()" style="font-size:20px; padding:10px"></i>
+            <span id="q-idx" style="font-size:14px; font-weight:bold; color:var(--p)">1/1</span>
+            <i class="fas fa-chevron-right" onclick="mv(1)" style="font-size:20px; padding:10px"></i>
+        </div>
+    </div>
+
+    <!-- 激活弹窗 -->
+    <div class="mask" id="auth">
+        <div class="pop">
+            <h3 style="margin-top:0">🔒 解锁课程</h3>
+            <p style="font-size:13px; color:#64748b">请输入激活码 (绑定本机)</p>
+            <input id="code" class="inp" placeholder="输入激活码" autocomplete="off">
+            <button class="btn-full" onclick="pay()">立即激活</button>
+            <div style="margin-top:20px; font-size:13px; color:#94a3b8" onclick="document.getElementById('auth').style.display='none'">暂不激活</div>
+        </div>
+    </div>
+
+<script>
+    // ===========================================
+    // 🔴🔴🔴 请在这里填入你的 ID 和 Key
+    const APP_ID = "Bf78FAJK8g1kXeWfhNENt0rM-MdYXbMMI"; 
+    const APP_KEY = "xxdvuinDsstVUV01qrBzgQPG";
+    // ===========================================
+
+    let tree=[], view=[], stack=[], mode='home', quiz={list:[], idx:0, font:17};
+    let user = {
+        id: '', 
+        lock: JSON.parse(localStorage.getItem('lock')||"[]"),
+        err: JSON.parse(localStorage.getItem('err')||"[]"),
+        star: JSON.parse(localStorage.getItem('star')||"[]"),
+        did: localStorage.getItem('did')
+    };
+
+    if(!user.did) { user.did = 'd_'+Math.random().toString(36).substr(2); localStorage.setItem('did',user.did); }
+    if(localStorage.getItem('dark')==='1') document.body.classList.add('dark');
+
+    window.onload = function() {
+        if(APP_ID.includes("填")) {
+            alert("⚠️ 还没填AppID！请修改 index.html 代码。");
+            document.getElementById('loading-text').innerText = "配置错误";
+            return;
+        }
+        try {
+            AV.init({ appId: APP_ID, appKey: APP_KEY });
+            sync();
+        } catch(e) { hideLoading(); alert("初始化失败"); }
+    };
+
+    async function sync() {
+        try {
+            const r = await new AV.Query('AppContent').descending('updatedAt').first();
+            hideLoading();
+            if(!r || !r.get('json')) {
+                document.getElementById('list').innerHTML = '<div class="empty-tip">暂无数据</div>';
+                return;
+            }
+            const json = r.get('json');
+            
+            // 配置
+            const cfg = json.config || {};
+            if(cfg.notice) {
+                const nb = document.getElementById('notice-bar');
+                nb.style.display = 'block'; nb.innerHTML = `<i class="fas fa-bullhorn"></i> ${cfg.notice}`;
+            }
+            if(cfg.contact) document.getElementById('contact-info').innerText = "客服: " + cfg.contact;
+            if(cfg.tabTitle) addTab(cfg.tabTitle, cfg.tabHtml);
+
+            // 列表
+            const list = Array.isArray(json) ? json : (json.list||[]);
+            tree = addUid(list);
+            goHome();
+
+        } catch(e) {
+            hideLoading();
+            document.getElementById('list').innerHTML = '<div class="empty-tip" onclick="location.reload()">加载失败，点击重试</div>';
+        }
+    }
+
+    function hideLoading() {
+        const mask = document.getElementById('loading-mask');
+        mask.style.opacity = '0';
+        setTimeout(() => mask.style.display = 'none', 500);
+    }
+
+    function addUid(arr) {
+        return arr.map(x => {
+            if(x.questions) x.questions.forEach(q => { if(!q.u) q.u=btoa(encodeURIComponent(q.q.substr(0,20))).substr(0,12); });
+            if(x.children) x.children = addUid(x.children);
+            return x;
+        });
+    }
+
+    // 页面与导航
+    function goTab(t) {
+        document.querySelectorAll('.page').forEach(e=>e.classList.remove('active'));
+        document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));
+        if(t==='home') { document.getElementById('p-home').classList.add('active'); document.querySelectorAll('.tab')[0].classList.add('active'); goHome(); }
+        else if(t==='mine') { document.getElementById('p-mine').classList.add('active'); document.querySelectorAll('.tab')[1].classList.add('active'); renderMine(); }
+    }
+
+    function addTab(tit, html) {
+        if(document.getElementById('tab-custom')) return;
+        const div = document.createElement('div');
+        div.className='tab'; div.id='tab-custom';
+        div.innerHTML=`<i class="fas fa-info-circle"></i><span>${tit}</span>`;
+        div.onclick = () => {
+            document.querySelectorAll('.page').forEach(e=>e.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));
+            div.classList.add('active');
+            if(!document.getElementById('p-custom')) {
+                const p = document.createElement('div'); p.id='p-custom'; p.className='page active';
+                p.innerHTML=`<div class="nav"><b>${tit}</b></div><div style="padding:20px; line-height:1.6">${html}</div>`;
+                document.body.appendChild(p);
+            } else document.getElementById('p-custom').classList.add('active');
+        };
+        document.querySelector('.tabs').appendChild(div);
+    }
+
+    function goHome(){ mode='home'; stack=[]; view=tree; renderL(); }
+    
+    function renderL(){
+        const c = document.getElementById('list'); c.innerHTML='';
+        document.getElementById('back').style.opacity = stack.length?'1':'0';
+        document.getElementById('title').innerText = stack.length?stack[stack.length-1].name:'题库中心';
+        if(view.length === 0) c.innerHTML = '<div class="empty-tip">空空如也</div>';
+
+        view.forEach(it => {
+            const d = document.createElement('div'); d.className='card';
+            const isF = it.type==='folder';
+            d.innerHTML = `
+                <div style="width:42px;height:42px;background:${isF?'#eff6ff':'#fff1f2'};color:${isF?'#2563eb':'#ef4444'};border-radius:10px;display:flex;align-items:center;justify-content:center;margin-right:12px;font-size:18px">
+                    <i class="fas ${isF?'fa-folder':'fa-file-alt'}"></i>
+                </div>
+                <div style="flex:1; font-weight:500; font-size:15px">${it.name}</div>
+                ${it.id ? (user.lock.includes(it.id)?'<span class="tag tag-ok">已购</span>':'<span class="tag tag-vip">🔒VIP</span>') : ''}
+            `;
+            d.onclick = () => {
+                d.style.transform = 'scale(0.98)'; setTimeout(()=>d.style.transform='scale(1)', 150);
+                if(it.id && !user.lock.includes(it.id)) { quiz.item=it; document.getElementById('auth').style.display='flex'; return; }
+                if(isF) { stack.push(it); view=it.children; renderL(); } else startQ(it.questions, it.name);
+            };
+            c.appendChild(d);
+        });
+    }
+
+    function goBack(){ if(stack.length){ stack.pop(); view=stack.length?stack[stack.length-1].children:tree; renderL(); } }
+
+    function renderMine(){
+        document.getElementById('s-err').innerText = user.err.length;
+        document.getElementById('s-star').innerText = user.star.length;
+        renderSubList('err-list', user.err, 'err');
+        renderSubList('star-list', user.star, 'star');
+    }
+
+    function renderSubList(domId, uids, type) {
+        const el = document.getElementById(domId); el.innerHTML='';
+        const res = [];
+        const find = (nodes) => {
+            nodes.forEach(n => {
+                if(n.questions) {
+                    const qs = n.questions.filter(q => uids.includes(q.u));
+                    if(qs.length) res.push({name:n.name, qs:qs});
+                }
+                if(n.children) find(n.children);
+            });
+        };
+        find(tree);
+        if(!res.length) el.innerHTML='<div style="text-align:center;font-size:12px;color:#cbd5e1;padding:10px">暂无记录</div>';
+        res.forEach(i => {
+            const d = document.createElement('div'); d.className='card'; d.style.padding='12px';
+            d.innerHTML=`<div style="flex:1; font-size:14px">${i.name}</div><div style="font-size:12px;color:#94a3b8">${i.qs.length}题</div><i class="fas fa-chevron-right" style="margin-left:10px;font-size:10px;opacity:0.3"></i>`;
+            d.onclick = () => startQ(i.qs, (type==='err'?'错题本':'收藏夹'));
+            el.appendChild(d);
+        });
+    }
+
+    // 答题
+    function startQ(qs, tit) {
+        if(!qs || !qs.length) return alert('没有题目');
+        quiz.list = qs; quiz.idx = 0;
+        document.getElementById('q-title').innerText = tit;
+        document.getElementById('quiz').style.display = 'flex';
+        renderQ();
+    }
+
+    function renderQ() {
+        const q = quiz.list[quiz.idx];
+        document.getElementById('q-idx').innerText = (quiz.idx+1) + '/' + quiz.list.length;
+        document.getElementById('prog-bar').style.width = ((quiz.idx+1)/quiz.list.length*100) + '%';
+        
+        const isS = user.star.includes(q.u);
+        const btnS = document.getElementById('btn-star');
+        btnS.className = isS ? 'fas fa-star' : 'far fa-star';
+        btnS.style.color = isS ? '#f59e0b' : '#64748b';
+
+        const b = document.getElementById('q-box');
+        b.innerHTML = `
+            <div style="font-size:${quiz.font}px; font-weight:600; margin-bottom:25px; line-height:1.6;">${quiz.idx+1}. ${q.q}</div>
+            <div>${q.o.map((o,i) => `
+                <div class="opt" onclick="check(this,${i})">
+                    <div style="width:24px;height:24px;background:#f1f5f9;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;color:#64748b;font-weight:bold;flex-shrink:0">${String.fromCharCode(65+i)}</div>
+                    <div style="font-size:${quiz.font-1}px; line-height:1.5">${o}</div>
+                </div>`).join('')}
+            </div>
+            <div id="ana" style="display:none; background:rgba(245,158,11,0.1); padding:15px; border-radius:12px; margin-top:25px;">
+                <div style="color:#b45309;font-weight:bold;font-size:13px;margin-bottom:5px">💡 解析</div>
+                <div style="font-size:14px; opacity:0.9; line-height:1.6">${q.r||'暂无'}</div>
+            </div>
+            <div style="height:50px"></div>`;
+    }
+
+    window.check = (el, i) => {
+        if(el.parentElement.querySelector('.sel')) return;
+        el.classList.add('sel');
+        const q = quiz.list[quiz.idx];
+        const opts = el.parentElement.querySelectorAll('.opt');
+        
+        el.querySelector('div:first-child').style.background = 'var(--p)';
+        el.querySelector('div:first-child').style.color = 'white';
+
+        if(i === q.a) {
+            el.classList.add('ok');
+            el.style.borderColor = '#22c55e';
+            el.querySelector('div:first-child').style.background = '#22c55e';
+        } else {
+            el.classList.add('err');
+            el.style.borderColor = '#ef4444';
+            el.querySelector('div:first-child').style.background = '#ef4444';
+            const okEl = opts[q.a];
+            okEl.classList.add('ok');
+            okEl.style.borderColor = '#22c55e';
+            okEl.querySelector('div:first-child').style.background = '#22c55e';
+            okEl.querySelector('div:first-child').style.color = 'white';
+            if(navigator.vibrate) navigator.vibrate(50);
+            if(!user.err.includes(q.u)) { user.err.unshift(q.u); localStorage.setItem('err', JSON.stringify(user.err)); }
+        }
+        document.getElementById('ana').style.display = 'block';
+        setTimeout(() => document.getElementById('q-box').scrollTo({ top: 10000, behavior: 'smooth' }), 100);
+    };
+
+    window.mv = (d) => {
+        const n = quiz.idx + d;
+        if(n >= 0 && n < quiz.list.length) { quiz.idx = n; renderQ(); }
+    };
+    window.quitQ = () => { document.getElementById('quiz').style.display = 'none'; if(mode !== 'home') renderMine(); }
+    window.star = () => {
+        const u = quiz.list[quiz.idx].u;
+        const i = user.star.indexOf(u);
+        if(i > -1) user.star.splice(i, 1); else user.star.unshift(u);
+        localStorage.setItem('star', JSON.stringify(user.star));
+        renderQ();
+    }
+    
+    // 滑动
+    let ts = 0;
+    const qb = document.getElementById('quiz');
+    qb.addEventListener('touchstart', e => ts = e.changedTouches[0].clientX);
+    qb.addEventListener('touchend', e => { if(e.changedTouches[0].clientX - ts < -80) mv(1); if(e.changedTouches[0].clientX - ts > 80) mv(-1); });
+
+    window.toggleDark = () => { document.body.classList.toggle('dark'); localStorage.setItem('dark', document.body.classList.contains('dark') ? '1' : '0'); }
+    window.resize = () => { quiz.font = quiz.font === 17 ? 20 : 17; renderQ(); }
+
+    // 激活
+    async function pay() {
+        const c = document.getElementById('code').value.trim();
+        if(!c) return alert('请输入激活码');
+        const btn = document.querySelector('#auth .btn-full');
+        const old = btn.innerText; btn.innerText = '验证中...'; btn.disabled = true;
+
+        try {
+            const r = await new AV.Query('Invites').equalTo('code', c).first();
+            if(!r) throw '无效激活码';
+            
+            const dur = r.get('duration');
+            const at = r.get('activatedAt');
+            const now = new Date();
+            
+            if(dur && dur !== -1) {
+                if(!at) { r.set('activatedAt', now); await r.save(); }
+                else {
+                    const exp = new Date(at); exp.setDate(exp.getDate() + dur);
+                    if(now > exp) throw '激活码已过期\n有效期至: ' + exp.toLocaleDateString();
+                }
+            }
+            
+            const devs = r.get('deviceIds') || [];
+            if(!devs.includes(user.did)) {
+                if(devs.length > 0) throw '此码已被其他设备使用';
+                devs.push(user.did); r.set('deviceIds', devs); await r.save();
+            }
+
+            if(r.get('subjectId') !== quiz.item.id) throw '此码不适用于本课程';
+            
+            user.lock.push(quiz.item.id);
+            localStorage.setItem('lock', JSON.stringify(user.lock));
+            alert('🎉 激活成功！');
+            document.getElementById('auth').style.display = 'none';
+            renderL();
+            
+        } catch(e) { alert(typeof e === 'string' ? e : '失败'); }
+        btn.innerText = old; btn.disabled = false;
+    }
+</script>
+</body>
+</html>
